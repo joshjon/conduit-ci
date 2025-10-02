@@ -41,6 +41,7 @@ type Runner struct {
 func StartGo(
 	ctx context.Context,
 	srcPath string,
+	conduitPath string,
 	runArgs []string,
 	extraEnv map[string]string,
 	stdout, stderr io.Writer,
@@ -92,13 +93,16 @@ func StartGo(
 	}
 
 	script := fmt.Sprintf(`set -e
-echo "go version:"; go version
-echo "go mod tidy:"; go mod tidy || true
-echo "go build:"; go build -o /tmp/app .
+echo "PATH is: $PATH"
+echo "which go:"; which go || true
+echo "ls /usr/local/go/bin:"; ls -l /usr/local/go/bin || true
+echo "go version:"; /usr/local/go/bin/go version
+echo "go mod tidy:"; /usr/local/go/bin/go mod tidy || true
+echo "go build:"; /usr/local/go/bin/go build -o /tmp/app .
 echo "run:"; /tmp/app %s
 `, shellJoin(runArgs))
 
-	env := make([]string, 0, len(extraEnv))
+	var env []string
 	for k, v := range extraEnv {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
@@ -106,16 +110,19 @@ echo "run:"; /tmp/app %s
 	hostSrc := toDockerHostPath(absSrc)
 
 	cfg := &container.Config{
-		Image:      imageRef,
-		WorkingDir: "/src",
-		Env:        env,
-		Entrypoint: strslice.StrSlice{"/bin/sh", "-lc"},
-		Cmd:        []string{script},
-
+		Image:        imageRef,
+		WorkingDir:   "/src/" + conduitPath,
+		Entrypoint:   strslice.StrSlice{"/bin/sh", "-lc"},
+		Cmd:          []string{script},
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          false,
 	}
+
+	if len(env) > 0 {
+		cfg.Env = env
+	}
+
 	hostCfg := &container.HostConfig{
 		Mounts: []mount.Mount{
 			{Type: mount.TypeBind, Source: hostSrc, Target: "/src"},

@@ -1,6 +1,8 @@
 # Conduit
 
-## Design
+A quick PoC to test out an old idea.
+
+## Brain dump
 
 ### Runners
 

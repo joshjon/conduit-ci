@@ -12,10 +12,10 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	"github.com/joshjon/conduit-ci/pkg/constants"
 	"github.com/joshjon/conduit-ci/pkg/fname"
 	"github.com/joshjon/conduit-ci/pkg/log"
 	"github.com/joshjon/conduit-ci/pkg/temporal"
-	"github.com/joshjon/conduit-ci/sdk/internal/constants"
 )
 
 func RegisterPipeline(w *Worker, def PipelineDefinition) {
@@ -65,28 +65,28 @@ func RegisterArgResultJob[A any, R any](w *Worker, def ArgResultJobDefinition[A,
 	})
 }
 
-type workerConfig struct {
+type WorkerConfig struct {
 	HostPort  string
 	Namespace string
 	Project   string
 }
 
-func loadWorkerConfig() (workerConfig, error) {
-	cfg := workerConfig{}
+func loadWorkerConfig() (WorkerConfig, error) {
+	cfg := WorkerConfig{}
 
 	cfg.HostPort = os.Getenv("CONDUIT_HOST_PORT")
 	if cfg.HostPort == "" {
-		return workerConfig{}, fmt.Errorf("CONDUIT_HOST_PORT is not set")
+		return WorkerConfig{}, fmt.Errorf("CONDUIT_HOST_PORT is not set")
 	}
 
 	cfg.Namespace = os.Getenv("CONDUIT_NAMESPACE")
 	if cfg.Namespace == "" {
-		return workerConfig{}, fmt.Errorf("CONDUIT_NAMESPACE is not set")
+		return WorkerConfig{}, fmt.Errorf("CONDUIT_NAMESPACE is not set")
 	}
 
 	cfg.Project = os.Getenv("CONDUIT_PROJECT")
 	if cfg.Project == "" {
-		return workerConfig{}, fmt.Errorf("CONDUIT_PROJECT is not set")
+		return WorkerConfig{}, fmt.Errorf("CONDUIT_PROJECT is not set")
 	}
 
 	return cfg, nil
