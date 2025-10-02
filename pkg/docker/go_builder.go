@@ -97,6 +97,8 @@ echo "PATH is: $PATH"
 echo "which go:"; which go || true
 echo "ls /usr/local/go/bin:"; ls -l /usr/local/go/bin || true
 echo "go version:"; /usr/local/go/bin/go version
+echo "Module cache size:"; du -sh /go/pkg/mod || true
+echo "Build cache size:"; du -sh /root/.cache/go-build || true
 echo "go mod tidy:"; /usr/local/go/bin/go mod tidy || true
 echo "go build:"; /usr/local/go/bin/go build -o /tmp/app .
 echo "run:"; /tmp/app %s

@@ -1,6 +1,6 @@
 # Conduit
 
-A quick PoC to test out an old idea.
+Bored so putting together a quick PoC to test out an old idea.
 
 ## Brain dump
 

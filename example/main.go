@@ -35,13 +35,8 @@ func run(ctx context.Context) error {
 	defer srv.Stop()
 	logger.Info("started temporal dev server", "frontend.host_port", addr, "ui.address", uiAddr)
 
-	client, err := temporal.NewClient(ctx, logger, addr, namespace)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	o := orchestrator.NewOrchestrator(logger, client, orchestrator.Config{
+	o := orchestrator.NewOrchestrator(logger, orchestrator.Config{
+		HostPort:  addr,
 		Namespace: namespace,
 		Project:   project,
 		Repo: github.RepoRef{
@@ -55,7 +50,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	<-make(chan struct{}) // TODO: remove me
+	<-ctx.Done() // TODO: remove - used to keep UI alive
 
 	return nil
 }

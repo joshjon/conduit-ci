@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -14,10 +15,12 @@ import (
 	"github.com/joshjon/conduit-ci/pkg/docker"
 	"github.com/joshjon/conduit-ci/pkg/github"
 	"github.com/joshjon/conduit-ci/pkg/log"
+	"github.com/joshjon/conduit-ci/pkg/temporal"
 	"github.com/joshjon/conduit-ci/sdk/conduit"
 )
 
 type Config struct {
+	HostPort  string
 	Namespace string
 	Project   string
 	Repo      github.RepoRef
@@ -26,18 +29,22 @@ type Config struct {
 type Orchestrator struct {
 	cfg    Config
 	logger log.Logger
-	client client.Client
 }
 
-func NewOrchestrator(logger log.Logger, client client.Client, cfg Config) *Orchestrator {
+func NewOrchestrator(logger log.Logger, cfg Config) *Orchestrator {
 	return &Orchestrator{
 		cfg:    cfg,
 		logger: logger,
-		client: client,
 	}
 }
 
 func (o *Orchestrator) Run(ctx context.Context) error {
+	tc, err := temporal.NewClient(ctx, o.logger, o.cfg.HostPort, o.cfg.Namespace)
+	if err != nil {
+		return err
+	}
+	defer tc.Close()
+
 	workDir := filepath.Join(
 		os.TempDir(),
 		"conduit",
@@ -64,7 +71,18 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 
 	o.logger.Info("starting go docker build runner container", "path", repoPath)
 
-	runner, err := docker.StartGo(ctx, repoPath, ".conduit", nil, nil, os.Stdout, os.Stderr)
+	_, port, err := net.SplitHostPort(o.cfg.HostPort)
+	if err != nil {
+		return err
+	}
+
+	envs := map[string]string{
+		"CONDUIT_HOST_PORT": "host.docker.internal:" + port,
+		"CONDUIT_NAMESPACE": o.cfg.Namespace,
+		"CONDUIT_PROJECT":   o.cfg.Project,
+	}
+
+	runner, err := docker.StartGo(ctx, repoPath, ".conduit", nil, envs, os.Stdout, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -73,7 +91,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	wfOpts := client.StartWorkflowOptions{TaskQueue: conduit.GetTaskQueue(o.cfg.Project, constants.ComponentPipeline)}
 	o.logger.Info("executing pipeline workflow", "workflow.name", constants.WorkflowPipeline, "task_queue", wfOpts.TaskQueue)
 
-	wr, err := o.client.ExecuteWorkflow(ctx, wfOpts, constants.WorkflowPipeline)
+	wr, err := tc.ExecuteWorkflow(ctx, wfOpts, constants.WorkflowPipeline)
 	if err != nil {
 		return err
 	}
