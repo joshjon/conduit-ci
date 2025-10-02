@@ -65,11 +65,31 @@ func RegisterArgResultJob[A any, R any](w *Worker, def ArgResultJobDefinition[A,
 	})
 }
 
-type WorkerConfig struct {
+type workerConfig struct {
 	HostPort  string
 	Namespace string
 	Project   string
-	Logger    log.Logger // optional
+}
+
+func loadWorkerConfig() (workerConfig, error) {
+	cfg := workerConfig{}
+
+	cfg.HostPort = os.Getenv("CONDUIT_HOST_PORT")
+	if cfg.HostPort == "" {
+		return workerConfig{}, fmt.Errorf("CONDUIT_HOST_PORT is not set")
+	}
+
+	cfg.Namespace = os.Getenv("CONDUIT_NAMESPACE")
+	if cfg.Namespace == "" {
+		return workerConfig{}, fmt.Errorf("CONDUIT_NAMESPACE is not set")
+	}
+
+	cfg.Project = os.Getenv("CONDUIT_PROJECT")
+	if cfg.Project == "" {
+		return workerConfig{}, fmt.Errorf("CONDUIT_PROJECT is not set")
+	}
+
+	return cfg, nil
 }
 
 type Worker struct {
@@ -79,15 +99,15 @@ type Worker struct {
 	worker worker.Worker
 }
 
-func NewWorker(cfg WorkerConfig) (*Worker, error) {
+func NewWorker() (*Worker, error) {
 	ctx := context.Background()
 
-	logger := cfg.Logger
-	if logger == nil {
-		logger = log.NewLogger()
+	cfg, err := loadWorkerConfig()
+	if err != nil {
+		return nil, err
 	}
 
-	temporalClient, err := temporal.NewClient(ctx, logger, cfg.HostPort, cfg.Namespace)
+	temporalClient, err := temporal.NewClient(ctx, log.NewLogger(), cfg.HostPort, cfg.Namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -108,15 +128,8 @@ func NewWorker(cfg WorkerConfig) (*Worker, error) {
 	}, nil
 }
 
-func (w *Worker) Run(ctx context.Context) error {
-	ch := make(chan any, 1)
-	go func() {
-		select {
-		case <-ctx.Done():
-			close(ch)
-		}
-	}()
-	return w.worker.Run(ch)
+func (w *Worker) Run() error {
+	return w.worker.Run(worker.InterruptCh())
 }
 
 func GetTaskQueue(project string, component string) string {
