@@ -10,10 +10,13 @@ import (
 
 	"github.com/google/uuid"
 	bkc "github.com/moby/buildkit/client"
+	"go.temporal.io/sdk/client"
 
+	"github.com/joshjon/conduit-ci/pkg/constants"
 	"github.com/joshjon/conduit-ci/pkg/github"
 	"github.com/joshjon/conduit-ci/pkg/log"
 	"github.com/joshjon/conduit-ci/pkg/temporal"
+	"github.com/joshjon/conduit-ci/sdk/conduit"
 )
 
 type Config struct {
@@ -96,17 +99,16 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		return err
 	}
 	defer runner.Stop()
-	return runner.Wait()
 
-	//wfOpts := client.StartWorkflowOptions{TaskQueue: conduit.GetTaskQueue(o.cfg.Project, constants.ComponentPipeline)}
-	//o.logger.Info("executing pipeline workflow", "workflow.name", constants.WorkflowPipeline, "task_queue", wfOpts.TaskQueue)
-	//
-	//wr, err := tc.ExecuteWorkflow(ctx, wfOpts, constants.WorkflowPipeline)
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//// TODO: query dependant modules and start the workers for them
-	//
-	//return wr.Get(ctx, nil)
+	wfOpts := client.StartWorkflowOptions{TaskQueue: conduit.GetTaskQueue(o.cfg.Project, constants.ComponentPipeline)}
+	o.logger.Info("executing pipeline workflow", "workflow.name", constants.WorkflowPipeline, "task_queue", wfOpts.TaskQueue)
+
+	wr, err := tc.ExecuteWorkflow(ctx, wfOpts, constants.WorkflowPipeline)
+	if err != nil {
+		return err
+	}
+
+	// TODO: query dependant modules and start the workers for them
+
+	return wr.Get(ctx, nil)
 }

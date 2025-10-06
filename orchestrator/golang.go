@@ -35,10 +35,7 @@ func StartGoWithBuilder(
 		return nil, err
 	}
 
-	if err := b.DetectDefaultPlatform(ctx); err != nil {
-		return nil, err
-	}
-	// You may keep b.Close() for exporters later; not required for a single run.
+	b.SetDefaultPlatform("linux/arm64") // TODO: support other platforms
 
 	source := b.Directory("src", absSrc)
 	goBuild := b.CacheVolume("go-build-cache")
@@ -52,18 +49,21 @@ func StartGoWithBuilder(
 	// Build steps (cached):
 
 	c := b.Container().
-		From("golang:latest").
+		From(ctx, "golang:1.25").
 		WithDirectory("/src", source).
 		WithMountedCache("/root/.cache/go-build", goBuild).
 		WithMountedCache("/go/pkg/mod", goMod).
-		WithWorkdir("/src/.conduit").
-		WithExec([]string{"go", "mod", "tidy"}).
-		WithExec([]string{"go", "build", "-o", "/tmp/app", "."})
+		WithWorkdir(workdir)
 
 	for k, v := range env {
 		c = c.WithEnv(k, v)
 	}
 
-	// Run the compiled binary with live logs. Stop() cancels the ExecOp.
+	c = c.
+		WithExec([]string{"go", "version"}). // quick sanity
+		WithExec([]string{"go", "env"}).     // optional debug
+		WithExec([]string{"go", "mod", "tidy"}).
+		WithExec([]string{"go", "build", "-o", "/tmp/app", "."})
+
 	return c.RunAndStream(ctx, append([]string{"/tmp/app"}, runArgs...), stdout, stderr)
 }

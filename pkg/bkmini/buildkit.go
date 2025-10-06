@@ -86,6 +86,7 @@ type Container struct {
 	workdir string
 	env     map[string]string
 	mounts  []mountSpec
+	err     error
 }
 
 type mountSpec struct {
@@ -105,33 +106,49 @@ func (b *Builder) Container() *Container {
 	}
 }
 
-// From sets the base image (e.g., "golang:latest") with platform awareness.
-func (c *Container) From(ref string) *Container {
+// From resolves ref to a platform-specific digest (if b.platform set), sets base image,
+// and automatically imports the image's Env (PATH, etc.). Any error is stored in c.err to
+// keep the chain fluent; Solve/RunAndStream will surface it.
+func (c *Container) From(ctx context.Context, ref string) *Container {
 	c2 := *c
-	c2.state = llb.Image(ref)
-	return &c2
-}
 
-func (c *Container) FromPlatform(ctx context.Context, ref string) (*Container, error) {
-	if c.b.platform == nil {
-		// fallback: no pinning
-		c2 := *c
+	// Choose image state (pinned if platform set)
+	if c2.b.platform != nil {
+		gp := v1.Platform{
+			OS:           c2.b.platform.OS,
+			Architecture: c2.b.platform.Architecture,
+			Variant:      c2.b.platform.Variant,
+		}
+		dgst, err := resolveImageDigestForPlatform(ctx, ref, gp)
+		if err != nil {
+			c2.err = fmt.Errorf("resolve %s for platform %s/%s: %w", ref, gp.OS, gp.Architecture, err)
+			c2.state = llb.Image(ref) // fall back so graph is still buildable
+		} else {
+			c2.state = llb.Image(ref + "@" + dgst)
+		}
+	} else {
 		c2.state = llb.Image(ref)
-		return &c2, nil
 	}
-	// Convert OCI specs.Platform -> go-containerregistry v1.Platform
-	gp := v1.Platform{
-		OS:           c.b.platform.OS,
-		Architecture: c.b.platform.Architecture,
-		Variant:      c.b.platform.Variant,
+
+	// Auto-import image Env (don’t overwrite user-provided vars)
+	if c2.err == nil {
+		envs, err := fetchImageEnv(ctx, ref, c2.b.platform)
+		if err != nil {
+			// Non-fatal: keep chaining, report later
+			c2.err = fmt.Errorf("load image env for %s: %w", ref, err)
+		} else {
+			if c2.env == nil {
+				c2.env = map[string]string{}
+			}
+			for k, v := range envs {
+				if _, exists := c2.env[k]; !exists {
+					c2.env[k] = v
+				}
+			}
+		}
 	}
-	dgst, err := resolveImageDigestForPlatform(ctx, ref, gp)
-	if err != nil {
-		return nil, err
-	}
-	c2 := *c
-	c2.state = llb.Image(ref + "@" + dgst)
-	return &c2, nil
+
+	return &c2
 }
 
 // WithDirectory mounts a registered Directory at dest.
@@ -175,6 +192,10 @@ func (c *Container) WithEnv(k, v string) *Container {
 
 // WithExec appends an ExecOp to the chain and returns the new container state.
 func (c *Container) WithExec(argv []string) *Container {
+	if c.err != nil {
+		c2 := *c
+		return &c2
+	}
 	opts := make([]llb.RunOption, 0, len(c.mounts)+2)
 
 	// Command
@@ -246,6 +267,9 @@ type Export struct {
 
 // Solve executes the current graph (and optionally exports an image).
 func (c *Container) Solve(ctx context.Context, export Export) error {
+	if c.err != nil {
+		return c.err
+	}
 	def, err := c.marshal(ctx)
 	if err != nil {
 		return fmt.Errorf("marshal llb: %w", err)
@@ -312,6 +336,9 @@ func (c *Container) RunAndStream(
 	argv []string,
 	stdout, stderr io.Writer,
 ) (*Runner, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
 	// Append the run command
 	runC := c.WithExec(argv)
 
@@ -374,44 +401,102 @@ func (c *Container) collectLocalDirs() map[string]string {
 
 // resolveImageDigestForPlatform resolves <ref> to the child manifest digest that matches p.
 // Example return: "sha256:abcd...".
+// resolveImageDigestForPlatform resolves <ref> to the child manifest digest for platform p.
+// It tolerates variant differences commonly seen on arm/arm64 (e.g., "" vs "v8").
 func resolveImageDigestForPlatform(ctx context.Context, ref string, p v1.Platform) (string, error) {
 	r, err := name.ParseReference(ref) // e.g. "golang:latest"
 	if err != nil {
 		return "", err
 	}
 
-	// Try as an index first (multi-arch).
-	idx, err := remote.Index(r, remote.WithContext(ctx))
-	if err == nil {
+	// Helper: are variants compatible for this arch?
+	variantsCompatible := func(imgVar, wantVar, arch string) bool {
+		switch arch {
+		case "arm64":
+			// arm64/"" and arm64/"v8" are effectively the same for selection purposes
+			return true
+		case "arm":
+			// be lenient: if either side omits variant, accept
+			if imgVar == "" || wantVar == "" {
+				return true
+			}
+			return imgVar == wantVar
+		default:
+			// for other arches, require exact match (or both empty)
+			return imgVar == wantVar
+		}
+	}
+
+	// Try as a multi-arch index first.
+	if idx, err := remote.Index(r, remote.WithContext(ctx)); err == nil {
 		im, err := idx.IndexManifest()
 		if err != nil {
 			return "", err
 		}
 		for _, m := range im.Manifests {
-			if m.Platform != nil &&
-				m.Platform.OS == p.OS &&
-				m.Platform.Architecture == p.Architecture &&
-				(m.Platform.Variant == p.Variant) {
-				return m.Digest.String(), nil
+			if m.Platform == nil {
+				continue
+			}
+			if m.Platform.OS != p.OS || m.Platform.Architecture != p.Architecture {
+				continue
+			}
+			if !variantsCompatible(m.Platform.Variant, p.Variant, p.Architecture) {
+				continue
+			}
+			return m.Digest.String(), nil
+		}
+		// If we didn’t find a matching child in the index, try fetching the
+		// platform-specific image directly; some registries resolve it server-side.
+		if img, err := remote.Image(r, remote.WithContext(ctx), remote.WithPlatform(p)); err == nil {
+			if d, derr := img.Digest(); derr == nil {
+				return d.String(), nil
 			}
 		}
-		return "", fmt.Errorf("no manifest for platform %s/%s%s in %s",
-			p.OS, p.Architecture, func() string {
-				if p.Variant != "" {
-					return "/" + p.Variant
-				}
-				return ""
-			}(), ref)
+		// Fall through to single-arch attempt below.
 	}
 
-	// If it wasn't an index, it might already be a single-arch image: fetch and return its digest.
-	img, err2 := remote.Image(r, remote.WithContext(ctx))
-	if err2 != nil {
-		return "", fmt.Errorf("fetch image/index: %v / %v", err, err2)
+	// If it wasn't an index, it might already be single-arch: fetch and return its digest.
+	img, err := remote.Image(r, remote.WithContext(ctx))
+	if err != nil {
+		return "", fmt.Errorf("fetch image: %w", err)
 	}
 	d, err := img.Digest()
 	if err != nil {
 		return "", err
 	}
 	return d.String(), nil
+}
+
+// fetchImageEnv loads Env from the image config for ref (optionally platform-pinned via p).
+func fetchImageEnv(ctx context.Context, ref string, p *specs.Platform) (map[string]string, error) {
+	// Resolve to platform-specific child if we have a platform.
+	imgRef := ref
+	if p != nil {
+		gp := v1.Platform{OS: p.OS, Architecture: p.Architecture, Variant: p.Variant}
+		dgst, err := resolveImageDigestForPlatform(ctx, ref, gp)
+		if err != nil {
+			return nil, err
+		}
+		imgRef = ref + "@" + dgst
+	}
+
+	r, err := name.ParseReference(imgRef)
+	if err != nil {
+		return nil, fmt.Errorf("parse ref: %w", err)
+	}
+	img, err := remote.Image(r, remote.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("fetch image: %w", err)
+	}
+	cfg, err := img.ConfigFile()
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	out := make(map[string]string, len(cfg.Config.Env))
+	for _, e := range cfg.Config.Env {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			out[k] = v
+		}
+	}
+	return out, nil
 }
