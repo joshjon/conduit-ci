@@ -15,6 +15,7 @@ import (
 	"github.com/joshjon/conduit-ci/pkg/constants"
 	"github.com/joshjon/conduit-ci/pkg/github"
 	"github.com/joshjon/conduit-ci/pkg/log"
+	"github.com/joshjon/conduit-ci/pkg/osutil"
 	"github.com/joshjon/conduit-ci/pkg/temporal"
 	"github.com/joshjon/conduit-ci/sdk/conduit"
 )
@@ -55,11 +56,18 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	repoPath := filepath.Join(workDir, "repo")
 
 	o.logger.Info("fetching repository", "workdir", repoPath)
-	sha, err := o.cfg.Repo.Fetch(ctx, repoPath)
-	if err != nil {
+
+	// TODO: remove this
+	if err = osutil.CopyDirContents("/Users/joshuaj/git/tmp/fuzzy-train", repoPath); err != nil {
 		return err
 	}
-	o.logger.Info("successfully fetched repository", "sha", sha)
+
+	//sha, err := o.cfg.Repo.Fetch(ctx, repoPath)
+	//if err != nil {
+	//	return err
+	//}
+
+	o.logger.Info("successfully fetched repository")
 
 	defer func() {
 		if rerr := os.RemoveAll(workDir); rerr != nil {

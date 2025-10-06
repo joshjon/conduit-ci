@@ -16,6 +16,7 @@ import (
 	"github.com/joshjon/conduit-ci/pkg/fname"
 	"github.com/joshjon/conduit-ci/pkg/log"
 	"github.com/joshjon/conduit-ci/pkg/temporal"
+	"github.com/joshjon/conduit-ci/sdk/jobs"
 )
 
 func RegisterPipeline(w *Worker, def PipelineDefinition) {
@@ -120,12 +121,16 @@ func NewWorker() (*Worker, error) {
 		Identity:                    id,
 	})
 
-	return &Worker{
+	w := &Worker{
 		ctx:    ctx,
 		id:     id,
 		client: temporalClient,
 		worker: wrk,
-	}, nil
+	}
+
+	RegisterArgResultJob(w, jobs.Docker)
+
+	return w, nil
 }
 
 func (w *Worker) Run() error {
