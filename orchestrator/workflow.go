@@ -53,6 +53,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	)
 
 	repoPath := filepath.Join(workDir, "repo")
+
 	o.logger.Info("fetching repository", "workdir", repoPath)
 	sha, err := o.cfg.Repo.Fetch(ctx, repoPath)
 	if err != nil {

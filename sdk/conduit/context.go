@@ -3,6 +3,7 @@ package conduit
 import "go.temporal.io/sdk/workflow"
 
 type Context interface {
+	WorkDir() string
 	workflowContext() workflow.Context
 	nextJobExecutionID() JobExecutionID
 }
@@ -12,11 +13,15 @@ type PipelineContext struct {
 	currID JobExecutionID
 }
 
-func NewPipelineContext(ctx workflow.Context) *PipelineContext {
+func newPipelineContext(ctx workflow.Context) *PipelineContext {
 	return &PipelineContext{
 		ctx:    ctx,
 		currID: 0,
 	}
+}
+
+func (c *PipelineContext) WorkDir() string {
+	return "/src"
 }
 
 func (c *PipelineContext) workflowContext() workflow.Context {

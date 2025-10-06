@@ -37,7 +37,7 @@ func StartGoWithBuilder(
 
 	b.SetDefaultPlatform("linux/arm64") // TODO: support other platforms
 
-	source := b.Directory("src", absSrc)
+	source := b.MountedDirectory("src", absSrc)
 	goBuild := b.CacheVolume("go-build-cache")
 	goMod := b.CacheVolume("go-mod-cache")
 

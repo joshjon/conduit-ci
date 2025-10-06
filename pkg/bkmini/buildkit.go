@@ -65,7 +65,7 @@ type Directory struct {
 	hostPath  string
 }
 
-func (b *Builder) Directory(localName, hostPath string) *Directory {
+func (b *Builder) MountedDirectory(localName, hostPath string) *Directory {
 	abs := hostPath
 	if !filepath.IsAbs(hostPath) {
 		abs = filepath.Clean("./" + hostPath)
@@ -311,6 +311,57 @@ func (c *Container) Solve(ctx context.Context, export Export) error {
 		LocalDirs: ldirs,
 		Exports:   exports,
 	}, nil)
+	return err
+}
+
+// SolveAndStream executes the current graph (no extra exec) and streams logs from all steps.
+// Succeeds if all prior .WithExec steps succeed; returns error if any step fails.
+func (c *Container) SolveAndStream(
+	ctx context.Context,
+	stdout, stderr io.Writer,
+) error {
+	if c.err != nil {
+		return c.err
+	}
+	def, err := c.marshal(ctx)
+	if err != nil {
+		return fmt.Errorf("marshal llb: %w", err)
+	}
+
+	statusCh := make(chan *bkc.SolveStatus, 16)
+	solveCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Stream logs
+	doneLogs := make(chan struct{})
+	go func() {
+		defer close(doneLogs)
+		for st := range statusCh {
+			for _, l := range st.Logs {
+				switch l.Stream {
+				case 1:
+					if stdout != nil {
+						_, _ = stdout.Write(l.Data)
+					}
+				case 2:
+					if stderr != nil {
+						_, _ = stderr.Write(l.Data)
+					}
+				default:
+					if stderr != nil {
+						_, _ = stderr.Write(l.Data)
+					}
+				}
+			}
+		}
+	}()
+
+	_, err = c.b.c.Solve(solveCtx, def, bkc.SolveOpt{
+		LocalDirs: c.collectLocalDirs(),
+	}, statusCh)
+
+	// Wait for log copier to drain
+	<-doneLogs
 	return err
 }
 

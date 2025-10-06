@@ -20,7 +20,7 @@ import (
 
 func RegisterPipeline(w *Worker, def PipelineDefinition) {
 	workflowFn := func(ctx workflow.Context) error {
-		return def(NewPipelineContext(ctx))
+		return def(newPipelineContext(ctx))
 	}
 	w.worker.RegisterWorkflowWithOptions(workflowFn, workflow.RegisterOptions{
 		Name: constants.WorkflowPipeline,
